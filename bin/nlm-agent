@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV_PYTHON="${NLM_AGENT_PYTHON:-$ROOT_DIR/.venv/bin/python}"
+
+if [[ -x "$VENV_PYTHON" ]]; then
+  exec "$VENV_PYTHON" -m notebooklm_agent_tools.cli "$@"
+fi
+
+export PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -m notebooklm_agent_tools.cli "$@"

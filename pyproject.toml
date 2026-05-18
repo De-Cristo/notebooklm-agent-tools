@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "notebooklm-agent-tools"
+version = "0.1.0"
+description = "Portable helper CLI for notebooklm-py workflows"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+  { name = "Johnson Zhang" }
+]
+dependencies = []
+
+[project.scripts]
+nlm-agent = "notebooklm_agent_tools.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
