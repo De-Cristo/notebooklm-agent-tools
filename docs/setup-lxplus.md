@@ -31,6 +31,8 @@ Then, if your security policy allows it, copy the upstream auth state in `~/.not
 
 lxplus is often headless, so browser login can be awkward or impossible without extra forwarding or a separate workstation.
 
+On workstation-class machines, the repo bootstrap now prefers an already installed local browser first. It only installs Playwright Chromium when no supported local browser is detected, or when forced explicitly.
+
 ## Common usage
 
 ```bash

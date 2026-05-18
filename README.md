@@ -36,6 +36,16 @@ If you need browser-based login on a workstation:
 ./scripts/bootstrap.sh --browser
 ```
 
+Browser behavior:
+
+- if a local Chrome, Chromium, or Edge browser is already installed, the bootstrap keeps that path and skips a Playwright browser download
+- if no supported local browser is found, the bootstrap installs Playwright Chromium as a fallback
+- if you want the fallback browser even on a machine that already has Chrome installed, use:
+
+```bash
+./scripts/bootstrap.sh --browser --force-playwright-browser
+```
+
 ### 2. Verify the install
 
 ```bash
@@ -132,6 +142,8 @@ By default, artifact downloads go under `./notebooklm-output/artifacts/<artifact
 - Upstream auth is handled by `notebooklm-py`
 - Default upstream storage usually lives under `~/.notebooklm/`
 - This repo does not commit auth state
+- The bootstrap prefers a locally installed browser for login when one is available
+- If no local browser is found, the bootstrap installs Playwright Chromium as the fallback login browser
 - For headless servers, authenticate on a desktop first and then copy the upstream storage state only if your security policy allows it
 
 ## lxplus Notes

@@ -48,6 +48,8 @@ For source-file fetching, expect:
 
 - Do not commit `~/.notebooklm/`
 - Do not commit browser profiles, cookies, or storage state
+- When bootstrapping with browser support, prefer an already installed local browser if one exists
+- Only fall back to `playwright install chromium` when no supported local browser is present, or when explicitly forced
 - If running on a headless server, assume login may need to happen on another machine first
 
 ## Common commands
