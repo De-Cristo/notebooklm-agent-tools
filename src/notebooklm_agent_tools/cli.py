@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 from .core import (
     NotebookLMCommandError,
     default_artifact_output_root,
+    download_source_bundle,
     doctor_lines,
     download_artifacts,
     export_sources,
     fetch_source_files,
     run_notebooklm,
+    source_list,
 )
 
 
@@ -35,6 +38,18 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument("--output", type=Path, help="Output directory.")
     export_parser.add_argument("--limit", type=int, help="Only export the first N sources.")
     export_parser.add_argument("--no-resume", action="store_true", help="Re-export even if files already exist.")
+
+    download_sources_parser = subparsers.add_parser(
+        "download-sources",
+        help="Download or export all notebook sources with source-type-aware strategies.",
+    )
+    download_sources_parser.add_argument("--notebook", help="Notebook ID. Uses current notebook if omitted.")
+    download_sources_parser.add_argument("--output", type=Path, help="Output directory.")
+    download_sources_parser.add_argument("--limit", type=int, help="Only process the first N sources.")
+    download_sources_parser.add_argument("--type", dest="type_filter", help="Only process one normalized source type, for example PDF or MARKDOWN.")
+    download_sources_parser.add_argument("--resume", dest="resume", action="store_true", help="Skip existing files. This is the default behavior.")
+    download_sources_parser.add_argument("--no-resume", dest="resume", action="store_false", help="Re-download even if files already exist.")
+    download_sources_parser.set_defaults(resume=True)
 
     fetch_parser = subparsers.add_parser(
         "fetch-source-files",
@@ -81,6 +96,15 @@ def build_parser() -> argparse.ArgumentParser:
     download_parser.add_argument("--no-clobber", action="store_true", help="Skip existing files.")
     download_parser.add_argument("--format", dest="format_name", help="Optional upstream format argument.")
 
+    source_list_parser = subparsers.add_parser(
+        "list-sources",
+        help="List sources from NotebookLM with optional wrapper-level type filtering.",
+    )
+    source_list_parser.add_argument("--notebook", help="Notebook ID. Uses current notebook if omitted.")
+    source_list_parser.add_argument("--type", dest="type_filter", help="Only include one normalized type, for example PDF or MARKDOWN.")
+    source_list_parser.add_argument("--limit", type=int, help="Only show the first N sources.")
+    source_list_parser.add_argument("--json", action="store_true", help="Emit JSON instead of a table-like text list.")
+
     return parser
 
 
@@ -106,6 +130,18 @@ def cmd_export_sources(args: argparse.Namespace) -> int:
         resume=not args.no_resume,
     )
     print(f"Wrote export to {target_dir}")
+    return 0
+
+
+def cmd_download_sources(args: argparse.Namespace) -> int:
+    target_dir = download_source_bundle(
+        notebook_id=args.notebook,
+        output_dir=args.output,
+        limit=args.limit,
+        type_filter=args.type_filter,
+        resume=args.resume,
+    )
+    print(f"Wrote source bundle to {target_dir}")
     return 0
 
 
@@ -144,6 +180,22 @@ def cmd_download_artifacts(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_list_sources(args: argparse.Namespace) -> int:
+    records = source_list(
+        notebook_id=args.notebook,
+        type_filter=args.type_filter,
+        limit=args.limit,
+    )
+    if args.json:
+        payload = [record.to_json() for record in records]
+        sys.stdout.write(f"{json.dumps(payload, indent=2, ensure_ascii=False)}\n")
+        return 0
+
+    for record in records:
+        print(f"{record.index:03d}  {record.normalized_type:<10}  {record.source_id}  {record.title}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -155,10 +207,14 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_run(args)
         if args.command == "export-sources":
             return cmd_export_sources(args)
+        if args.command == "download-sources":
+            return cmd_download_sources(args)
         if args.command == "fetch-source-files":
             return cmd_fetch_source_files(args)
         if args.command == "download-artifacts":
             return cmd_download_artifacts(args)
+        if args.command == "list-sources":
+            return cmd_list_sources(args)
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
         return 1

@@ -17,10 +17,11 @@ Do not assume that `notebooklm` is installed globally. This repo intentionally r
 1. Run `./bin/nlm-agent doctor`
 2. If needed, run `./bin/nlm-agent run login`
 3. Inspect context with `./bin/nlm-agent run status`
-4. Use `./bin/nlm-agent run ...` for generic upstream commands
-5. Use `./bin/nlm-agent export-sources` for predictable local source export
-6. Use `./bin/nlm-agent fetch-source-files` for best-effort original URL downloads
-7. Use `./bin/nlm-agent download-artifacts ...` for stable artifact downloads
+4. Prefer `./bin/nlm-agent download-sources` for bulk notebook export
+5. Use `./bin/nlm-agent list-sources --type ...` when you need type-aware filtering
+6. Use `./bin/nlm-agent run ...` for generic upstream commands
+7. Use `./bin/nlm-agent fetch-source-files` for best-effort original URL downloads
+8. Use `./bin/nlm-agent download-artifacts ...` for stable artifact downloads
 
 ## Expected output layout
 
@@ -36,6 +37,13 @@ Typical files:
 - `README.md`
 - `errors.json`
 - `NNN-<slug>-<source-id>.txt`
+
+For `download-sources`, the manifest includes:
+
+- source id, title, type, URL
+- local filename
+- chosen strategy
+- per-source status
 
 For source-file fetching, expect:
 
@@ -56,6 +64,8 @@ For source-file fetching, expect:
 
 ```bash
 ./bin/nlm-agent doctor
+./bin/nlm-agent download-sources --notebook <id>
+./bin/nlm-agent list-sources --type PDF --json
 ./bin/nlm-agent run list
 ./bin/nlm-agent run source list --json
 ./bin/nlm-agent export-sources --notebook <id>

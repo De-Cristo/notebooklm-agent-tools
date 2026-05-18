@@ -24,6 +24,46 @@ class NotebookLMCommandError(RuntimeError):
         self.returncode = returncode
 
 
+@dataclass
+class SourceRecord:
+    index: int
+    source_id: str
+    title: str
+    source_type: str
+    url: str | None
+    created_at: str | None
+    status: str | None
+
+    @classmethod
+    def from_manifest_entry(cls, source: dict[str, object]) -> "SourceRecord":
+        return cls(
+            index=int(source.get("index", 0)),
+            source_id=str(source["id"]),
+            title=str(source.get("title") or source["id"]),
+            source_type=str(source.get("type") or "unknown"),
+            url=str(source["url"]) if source.get("url") else None,
+            created_at=str(source["created_at"]) if source.get("created_at") else None,
+            status=str(source["status"]) if source.get("status") else None,
+        )
+
+    @property
+    def normalized_type(self) -> str:
+        raw = self.source_type.split(".")[-1]
+        return raw.upper()
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "index": self.index,
+            "id": self.source_id,
+            "title": self.title,
+            "type": self.source_type,
+            "normalized_type": self.normalized_type,
+            "url": self.url,
+            "created_at": self.created_at,
+            "status": self.status,
+        }
+
+
 def slugify(text: str) -> str:
     value = SLUG_RE.sub("-", text.strip().replace("/", " ")).strip("-").lower()
     return value or "notebook"
@@ -101,12 +141,31 @@ class SourceExportError:
         }
 
 
+def normalize_source_type(value: str) -> str:
+    return value.strip().upper().replace("-", "_")
+
+
 def load_source_manifest(notebook_id: str | None = None) -> dict[str, object]:
     args = ["source", "list", "--json"]
     if notebook_id:
         args.extend(["--notebook", notebook_id])
     result = run_notebooklm(args, capture_output=True)
     return json.loads(result.stdout)
+
+
+def source_records_from_manifest(
+    manifest: dict[str, object],
+    *,
+    type_filter: str | None = None,
+    limit: int | None = None,
+) -> list[SourceRecord]:
+    records = [SourceRecord.from_manifest_entry(source) for source in manifest.get("sources", [])]
+    if type_filter:
+        normalized_filter = normalize_source_type(type_filter)
+        records = [record for record in records if record.normalized_type == normalized_filter]
+    if limit is not None:
+        records = records[:limit]
+    return records
 
 
 def ensure_dir(path: Path) -> None:
@@ -140,6 +199,33 @@ def infer_extension_from_url_and_content_type(url: str, content_type: str | None
     return ".bin"
 
 
+def arxiv_pdf_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.netloc not in {"arxiv.org", "www.arxiv.org"}:
+        return url
+
+    path = parsed.path
+    if path.startswith("/pdf/"):
+        return url if path.endswith(".pdf") else f"https://arxiv.org{path}.pdf"
+    if path.startswith("/abs/"):
+        identifier = path[len("/abs/") :]
+        return f"https://arxiv.org/pdf/{identifier}.pdf"
+    if path.startswith("/html/"):
+        identifier = path[len("/html/") :]
+        return f"https://arxiv.org/pdf/{identifier}.pdf"
+    return url
+
+
+def select_source_download_url(record: SourceRecord) -> str | None:
+    if not record.url:
+        return None
+    if "arxiv.org" in record.url and (
+        "/abs/" in record.url or "/html/" in record.url or "/pdf/" in record.url
+    ):
+        return arxiv_pdf_url(record.url)
+    return record.url
+
+
 def fetch_url_to_file(url: str, destination: Path) -> tuple[int | None, str | None]:
     request = Request(
         url,
@@ -165,9 +251,7 @@ def export_sources(
     stream: bool = True,
 ) -> Path:
     manifest = load_source_manifest(notebook_id=notebook_id)
-    sources = list(manifest.get("sources", []))
-    if limit is not None:
-        sources = sources[:limit]
+    records = source_records_from_manifest(manifest, limit=limit)
 
     target_dir = select_output_dir(manifest, output_dir)
     ensure_dir(target_dir)
@@ -175,11 +259,11 @@ def export_sources(
     write_text(target_dir / "manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False))
 
     errors: list[SourceExportError] = []
-    total = len(sources)
+    total = len(records)
 
-    for index, source in enumerate(sources, start=1):
-        source_id = str(source["id"])
-        title = str(source.get("title") or source_id)
+    for index, record in enumerate(records, start=1):
+        source_id = record.source_id
+        title = record.title
         source_slug = slugify(title)[:90]
         source_file = target_dir / f"{index:03d}-{source_slug}-{source_id}.txt"
 
@@ -297,8 +381,7 @@ def fetch_source_files(
     stream: bool = True,
 ) -> Path:
     manifest = load_source_manifest(notebook_id=notebook_id)
-    all_sources = list(manifest.get("sources", []))
-    url_sources = [source for source in all_sources if source.get("url")]
+    url_sources = [record for record in source_records_from_manifest(manifest) if record.url]
     if limit is not None:
         url_sources = url_sources[:limit]
 
@@ -312,10 +395,10 @@ def fetch_source_files(
     downloaded: list[dict[str, object]] = []
     total = len(url_sources)
 
-    for index, source in enumerate(url_sources, start=1):
-        source_id = str(source["id"])
-        title = str(source.get("title") or source_id)
-        url = str(source["url"])
+    for index, record in enumerate(url_sources, start=1):
+        source_id = record.source_id
+        title = record.title
+        url = select_source_download_url(record) or ""
         source_slug = slugify(title)[:90]
         meta_path = target_dir / f"{index:03d}-{source_slug}-{source_id}.json"
 
@@ -339,7 +422,7 @@ def fetch_source_files(
                 "id": source_id,
                 "title": title,
                 "url": url,
-                "type": source.get("type"),
+                "type": record.source_type,
                 "http_status": status,
                 "content_type": content_type,
                 "path": data_path.name,
@@ -377,6 +460,160 @@ def fetch_source_files(
     return target_dir
 
 
+def source_list(
+    *,
+    notebook_id: str | None = None,
+    type_filter: str | None = None,
+    limit: int | None = None,
+) -> list[SourceRecord]:
+    manifest = load_source_manifest(notebook_id=notebook_id)
+    return source_records_from_manifest(manifest, type_filter=type_filter, limit=limit)
+
+
+def source_fulltext(
+    source_id: str,
+    *,
+    notebook_id: str | None = None,
+    output_path: Path,
+) -> None:
+    cmd = ["source", "fulltext", source_id, "--output", str(output_path)]
+    if notebook_id:
+        cmd.extend(["--notebook", notebook_id])
+    run_notebooklm(cmd, capture_output=True)
+
+
+def download_source_bundle(
+    *,
+    notebook_id: str | None = None,
+    output_dir: Path | None = None,
+    limit: int | None = None,
+    resume: bool = True,
+    type_filter: str | None = None,
+    stream: bool = True,
+) -> Path:
+    manifest = load_source_manifest(notebook_id=notebook_id)
+    records = source_records_from_manifest(manifest, type_filter=type_filter, limit=limit)
+    target_dir = select_output_dir(manifest, output_dir)
+    ensure_dir(target_dir)
+
+    run_manifest: list[dict[str, object]] = []
+    errors: list[dict[str, object]] = []
+    total = len(records)
+
+    for index, record in enumerate(records, start=1):
+        source_slug = slugify(record.title)[:90]
+        strategy = "fulltext"
+        local_name = None
+        status = "ok"
+        effective_url = select_source_download_url(record)
+
+        if record.normalized_type == "MARKDOWN":
+            extension = ".md"
+            strategy = "fulltext-markdown"
+        elif record.normalized_type == "PDF" and effective_url:
+            extension = ".pdf"
+            strategy = "download-pdf"
+        elif record.normalized_type == "WEB_PAGE" and effective_url:
+            extension = ".html"
+            strategy = "download-webpage"
+        elif effective_url:
+            extension = infer_extension_from_url_and_content_type(effective_url, None)
+            strategy = "download-url"
+        else:
+            extension = ".txt"
+            strategy = "fulltext-text"
+
+        target_file = target_dir / f"{index:03d}-{source_slug}-{record.source_id}{extension}"
+        local_name = target_file.name
+
+        if resume and target_file.exists() and target_file.stat().st_size > 0:
+            run_manifest.append(
+                {
+                    **record.to_json(),
+                    "strategy": strategy,
+                    "local_filename": local_name,
+                    "status": "skipped-existing",
+                    "effective_url": effective_url,
+                }
+            )
+            if stream and (index % 10 == 0 or index == total):
+                print(f"Skipped existing {index}/{total}")
+                sys.stdout.flush()
+            continue
+
+        try:
+            if strategy.startswith("fulltext"):
+                source_fulltext(record.source_id, notebook_id=notebook_id, output_path=target_file)
+            else:
+                temp_file = target_file.with_suffix(target_file.suffix + ".download")
+                http_status, content_type = fetch_url_to_file(effective_url or "", temp_file)
+                if strategy == "download-url":
+                    inferred_extension = infer_extension_from_url_and_content_type(effective_url or "", content_type)
+                    final_file = target_file.with_suffix(inferred_extension)
+                    if final_file != target_file:
+                        target_file = final_file
+                        local_name = target_file.name
+                if target_file.exists():
+                    target_file.unlink()
+                temp_file.rename(target_file)
+
+            run_manifest.append(
+                {
+                    **record.to_json(),
+                    "strategy": strategy,
+                    "local_filename": local_name,
+                    "status": status,
+                    "effective_url": effective_url,
+                }
+            )
+        except Exception as exc:
+            status = "error"
+            error = {
+                **record.to_json(),
+                "strategy": strategy,
+                "local_filename": local_name,
+                "status": status,
+                "effective_url": effective_url,
+                "error": str(exc),
+            }
+            run_manifest.append(error)
+            errors.append(error)
+
+        if stream and (index % 10 == 0 or index == total):
+            print(f"Downloaded {index}/{total}")
+            sys.stdout.flush()
+
+    bundle_manifest = {
+        "notebook_id": manifest.get("notebook_id"),
+        "notebook_title": manifest.get("notebook_title"),
+        "count": len(records),
+        "sources": run_manifest,
+    }
+    write_text(target_dir / "manifest.json", json.dumps(bundle_manifest, indent=2, ensure_ascii=False))
+    write_text(target_dir / "errors.json", json.dumps(errors, indent=2, ensure_ascii=False))
+    write_text(
+        target_dir / "README.md",
+        (
+            "# NotebookLM Source Download Bundle\n\n"
+            "This directory contains a bulk source download/export run.\n\n"
+            "- `manifest.json`: per-source metadata, local filename, strategy, and status\n"
+            "- `errors.json`: failed sources\n"
+            "- downloaded files or fulltext exports\n\n"
+            "Strategies are selected automatically per source type.\n"
+        ),
+    )
+    return target_dir
+
+
+def detect_notebooklm_auth_paths() -> list[Path]:
+    notebooklm_home = Path(os.environ.get("NOTEBOOKLM_HOME", Path.home() / ".notebooklm"))
+    candidates = [
+        notebooklm_home / "storage_state.json",
+        notebooklm_home / "profiles" / "default" / "storage_state.json",
+    ]
+    return candidates
+
+
 def doctor_lines() -> Iterable[str]:
     yield f"repo_root: {repo_root()}"
     try:
@@ -388,4 +625,7 @@ def doctor_lines() -> Iterable[str]:
 
     notebooklm_home = Path(os.environ.get("NOTEBOOKLM_HOME", Path.home() / ".notebooklm"))
     yield f"notebooklm_home: {notebooklm_home}"
-    yield f"storage_state_exists: {(notebooklm_home / 'storage_state.json').exists()}"
+    auth_paths = detect_notebooklm_auth_paths()
+    yield f"storage_state_exists: {any(path.exists() for path in auth_paths)}"
+    for index, path in enumerate(auth_paths, start=1):
+        yield f"auth_path[{index}]: {path} exists={path.exists()}"

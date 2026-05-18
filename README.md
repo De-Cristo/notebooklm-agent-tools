@@ -7,6 +7,7 @@ This repository does **not** ship real NotebookLM data, browser state, or authen
 ## What This Repo Provides
 
 - A portable Python CLI for AI agents and humans
+- A unified bulk `download-sources` command for AI workflows
 - Bulk export of NotebookLM source fulltext into a local directory
 - Best-effort fetching of original URL-backed source files
 - Stable local wrapper for NotebookLM artifact downloads
@@ -70,6 +71,30 @@ Browser behavior:
 ./bin/nlm-agent export-sources
 ```
 
+### 6. Preferred AI workflow: bulk source download
+
+```bash
+./bin/nlm-agent download-sources
+./bin/nlm-agent download-sources --notebook <notebook_id>
+./bin/nlm-agent download-sources --type PDF
+./bin/nlm-agent download-sources --output ./notebooklm-output/my-bundle --resume
+```
+
+This is the recommended high-level command for AI-agent usage. It chooses a strategy per source:
+
+- `MARKDOWN` without URL -> fulltext export as `.md`
+- `PDF` with URL -> direct file download
+- arXiv `abs` or `html` URL -> rewritten to PDF and downloaded
+- `WEB_PAGE` with URL -> saved from the original URL
+- no URL -> fulltext export as `.txt`
+
+Every run writes:
+
+- `manifest.json` with source id, title, type, local filename, strategy, and status
+- `errors.json`
+- `README.md`
+- one downloaded file or exported text file per source
+
 ## Wrapped Commands
 
 ### Health and discovery
@@ -108,6 +133,14 @@ This writes:
 
 The `.txt` files contain the **NotebookLM-indexed fulltext**, which is what NotebookLM uses internally when answering questions. They are not guaranteed to be the original PDFs or HTML pages.
 
+### Source listing with type filtering
+
+```bash
+./bin/nlm-agent list-sources
+./bin/nlm-agent list-sources --type PDF
+./bin/nlm-agent list-sources --type MARKDOWN --json
+```
+
 ### Best-effort original source fetch
 
 ```bash
@@ -141,6 +174,7 @@ By default, artifact downloads go under `./notebooklm-output/artifacts/<artifact
 
 - Upstream auth is handled by `notebooklm-py`
 - Default upstream storage usually lives under `~/.notebooklm/`
+- `doctor` checks both `~/.notebooklm/storage_state.json` and `~/.notebooklm/profiles/default/storage_state.json`
 - This repo does not commit auth state
 - The bootstrap prefers a locally installed browser for login when one is available
 - If no local browser is found, the bootstrap installs Playwright Chromium as the fallback login browser
@@ -159,3 +193,13 @@ Short version:
 ## For AI Agents
 
 Start with [AGENTS.md](./AGENTS.md). It explains the expected command patterns and output locations.
+
+## Python Usage
+
+This repo also exposes a light import surface for agent-side scripting:
+
+```python
+from notebooklm_agent_tools import download_source_bundle, source_list
+```
+
+This is intentionally a wrapper-level API, not a replacement for the upstream `notebooklm-py` object model.
